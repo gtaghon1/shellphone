@@ -77,7 +77,13 @@ export function relativeToRepo(root: string, filePath: string): string | null {
     for (const c of candidates) {
       const rel = path.relative(r, c);
       // '' means the path *is* the root; '..' means it escapes it.
-      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return rel;
+      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+        // Always emit forward slashes, whatever the host separator. The ledger
+        // is a git-committed file that can be written on one machine and read
+        // on another, so `src\ledger.ts` and `src/ledger.ts` must not both be
+        // able to appear in it. Matches how git itself reports paths.
+        return rel.split(path.sep).join('/');
+      }
     }
   }
   return null;

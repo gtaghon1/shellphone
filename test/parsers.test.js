@@ -146,6 +146,22 @@ test('absolute paths inside the repo become repo-relative', () => {
   assert.equal(relativeToRepo(dir, 'src/ledger.ts'), 'src/ledger.ts', 'already-relative is a no-op');
 });
 
+test('repo-relative paths always use forward slashes', () => {
+  // The ledger is git-committed and may be written on one machine, read on
+  // another. `src\\ledger.ts` and `src/ledger.ts` must not both be able to
+  // appear in it. (On POSIX this is a no-op; it is the Windows path that needs
+  // it, and this assertion is what would catch a regression there.)
+  const dir = tmpRepo();
+  const rel = relativeToRepo(dir, path.join(dir, 'src', 'sub', 'ledger.ts'));
+  assert.equal(rel, 'src/sub/ledger.ts');
+  assert.ok(!rel.includes('\\'), 'no backslash separators');
+  assert.deepEqual(
+    normalizeChanged(dir, [path.join(dir, '.shellphone', 'state.md')]),
+    [],
+    "shellphone's own files are excluded regardless of host separator",
+  );
+});
+
 test('paths outside the repo root are rejected', () => {
   const dir = tmpRepo();
   const outside = tmpRepo();
