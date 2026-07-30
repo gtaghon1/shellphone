@@ -4,7 +4,7 @@
   "display_name": "shellphone",
   "version": "0.1.0",
   "description": "Let Claude see what Claude Code has been doing in your local repos, and send instructions back.",
-  "long_description": "shellphone is a context bridge between Claude Code and Claude chat sessions, so you stop hand-carrying state between them.\n\nWhile you work in Claude Code, it records a short digest of each stretch of work into `.shellphone/state.md` in your repo — what landed, what state it is in, what decision is open. It also records a standing manifest of what the project *is*: stack, layout, settled decisions and why they were settled, constraints, gotchas. This extension reads those files back, so you can ask \"where is that project at?\" in chat and get an accurate answer without pasting anything.\n\nYou can also send an instruction the other way. It lands in the repo's inbox and is surfaced at the start of your next Claude Code session in that repo, which shows it to you before acting on it.\n\nEverything stays on your machine. shellphone moves state *about* code — status, decisions, open questions — never the code itself. There is no backend, no account, and no telemetry.\n\nRequires the shellphone CLI and Claude Code hooks to be installed to produce digests; see the setup guide in the documentation.",
+  "long_description": "shellphone is a context bridge between Claude Code and Claude chat sessions, so you stop hand-carrying state between them.\n\nWhile you work in Claude Code, it records a short digest of each stretch of work into `.shellphone/state.md` in your repo \u2014 what landed, what state it is in, what decision is open. It also records a standing manifest of what the project *is*: stack, layout, settled decisions and why they were settled, constraints, gotchas. This extension reads those files back, so you can ask \"where is that project at?\" in chat and get an accurate answer without pasting anything.\n\nYou can also send an instruction the other way. It lands in the repo's inbox and is surfaced at the start of your next Claude Code session in that repo, which shows it to you before acting on it.\n\nEverything stays on your machine. shellphone moves state *about* code \u2014 status, decisions, open questions \u2014 never the code itself. There is no backend, no account, and no telemetry.\n\nRequires the shellphone CLI and Claude Code hooks to be installed to produce digests; see the setup guide in the documentation.",
   "author": {
     "name": "Geoffrey Taghon",
     "email": "geoff.taghon@gmail.com",
@@ -35,7 +35,10 @@
     "entry_point": "dist/cli.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/dist/cli.js", "mcp"]
+      "args": [
+        "${__dirname}/dist/cli.js",
+        "mcp"
+      ]
     }
   },
   "tools_generated": false,
@@ -50,7 +53,7 @@
     },
     {
       "name": "get_queue_status",
-      "description": "Check whether Claude Code has picked up the instructions you sent to a repo — separately reporting whether each was shown to it and whether it was acted on."
+      "description": "Check whether Claude Code has picked up the instructions you sent to a repo \u2014 separately reporting whether each was shown to it and whether it was acted on."
     },
     {
       "name": "send_instruction",
@@ -62,12 +65,14 @@
     },
     {
       "name": "record_manifest",
-      "description": "Record what a project is — stack, layout, settled decisions, constraints, gotchas. Called by Claude Code after surveying a repo."
+      "description": "Record what a project is \u2014 stack, layout, settled decisions, constraints, gotchas. Called by Claude Code after surveying a repo."
     }
   ],
   "compatibility": {
     "claude_desktop": ">=0.10.0",
-    "platforms": ["darwin", "win32"],
+    "platforms": [
+      "darwin"
+    ],
     "runtimes": {
       "node": ">=20.0.0"
     }

@@ -38,21 +38,22 @@ Reference: [submission requirements](https://claude.com/docs/connectors/building
 
 ## Before submitting — still open
 
-1. **Push to GitHub.** The privacy policy URL in `manifest.json` points at
-   `blob/master/PRIVACY.md`. It 404s until this is pushed, and a missing or
-   unreachable privacy policy is an *immediate rejection*. Verify the URL loads
-   in a logged-out browser.
-2. **Test on Windows.** `manifest.json` declares `["darwin", "win32"]`. The
-   server path uses only cross-platform Node APIs, so it should work, but it has
-   not been run there. Either verify it or drop `win32` from `compatibility`
-   before submitting — shipping an untested platform claim is worse than
-   claiming less.
+1. ~~**Push to GitHub.**~~ **Done** — `PRIVACY.md`, `README.md`, `LICENSE`,
+   `manifest.json`, and `icon.png` all return 200 unauthenticated.
+2. ~~**Test on Windows.**~~ **Resolved:** `win32` was dropped from
+   `compatibility`; the extension ships macOS-only for 0.1.0. An untested
+   platform claim that fails on install is a worse review outcome than a
+   narrower claim that works, and widening support later is easy. A Windows
+   audit did surface and fix one real defect (`path.relative` returns
+   backslashes, which broke the `.shellphone/` exclusion and would have written
+   mixed separators into a git-committed ledger), so adding `win32` in a later
+   release now mostly needs someone to actually run it.
 3. **Attach a built bundle.** `npm run pack` → `build/shellphone-<version>.mcpb`.
    Consider attaching it to a GitHub release so the README download link
    resolves.
-4. **Decide on npm.** `npm publish` would make `npm install -g shellphone` work
-   as documented. Until then the README's CLI instructions are aspirational, and
-   a reviewer following them will fail at step one.
+4. ~~**Decide on npm.**~~ **Done** — `shellphone@0.1.0` is published; verified
+   by installing from the public registry into a clean prefix and running the
+   binary.
 5. **Walk the reviewer path yourself**, on a machine without your `~/.shellphone`:
    install the `.mcpb`, run `scripts/demo-seed.sh`, and try all four example
    prompts.
