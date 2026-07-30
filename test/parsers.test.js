@@ -296,10 +296,30 @@ test('no digest at all is stale as soon as anything was touched', () => {
   assert.match(driftNotice(d), /no digest yet/);
 });
 
+test('a clean tree stays fresh even when the session touched files earlier', () => {
+  // Regression: git returning "nothing dirty" was indistinguishable from git
+  // being absent, so the fallback replayed every file the session ever touched
+  // and the hook demanded a second digest seconds after the first.
+  const { dir } = gitRepo();
+  const since = new Date().toISOString();
+  const touchedEarlier = [path.join(dir, 'a.ts')]; // committed before `since`
+  const d = computeDrift(dir, since, touchedEarlier, CFG);
+  assert.equal(d.level, 'fresh');
+  assert.deepEqual(d.files, []);
+});
+
+test('the non-git fallback still ignores files older than the reference', () => {
+  const dir = tmpRepo();
+  fs.writeFileSync(path.join(dir, 'old.ts'), 'x');
+  const since = new Date(Date.now() + 1000).toISOString(); // reference in the future
+  assert.equal(computeDrift(dir, since, [path.join(dir, 'old.ts')], CFG).level, 'fresh');
+});
+
 test('outside a git repo, drift falls back to reported files', () => {
   // Without this the non-git case reports fresh forever and never escalates.
   const dir = tmpRepo();
   const since = new Date(Date.now() - 60_000).toISOString();
+  fs.writeFileSync(path.join(dir, 'a.ts'), 'x');
   const d = computeDrift(dir, since, [path.join(dir, 'a.ts')], CFG);
   assert.deepEqual(d.files, ['a.ts']);
   assert.equal(d.level, 'drifting');

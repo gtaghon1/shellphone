@@ -41,3 +41,42 @@ open_questions:
     more environment than the absolute node path supplies?
 session: 18a024c2-0578-473d-b00f-74321cf330e1
 ```
+
+## 2026-07-30T19:22:32Z · master · wip
+
+```yaml
+ts: 2026-07-30T19:22:32Z
+repo: shellphone
+branch: master
+machine: M4.local
+status: wip
+summary: "Both path bugs from instruction 3880ea are fixed and acked:
+  changed[] is now repo-relative and scoped to the repo root, enforced at
+  every point that writes a digest rather than only where paths are detected.
+  Fixing them surfaced two adjacent bugs, also fixed — git status --porcelain
+  emits paths relative to the git root (not necessarily the shellphone root),
+  and realpath cannot resolve a symlinked parent when the leaf file is gone.
+  Digest triggering was then reworked from per-session to per-drift on the
+  context-compaction model: a /digest slash command writes one on demand,
+  drift is measured against the ledger as commits plus changed files since the
+  last digest, and the Stop hook only asks once drift crosses a threshold. 28
+  tests green, three commits on master."
+changed:
+  - README.md
+  - src/cli.ts
+  - src/drift.ts
+  - src/format.ts
+  - src/hooks.ts
+  - src/paths.ts
+  - src/server.ts
+  - src/types.ts
+  - test/parsers.test.js
+open_questions:
+  - "Untested surfaces: autonomous mode, SessionStart delivery of an
+    instruction queued while no session is open, and the Claude Desktop
+    connector (connected but never exercised)."
+  - Is a 5-file / 2-commit / 45-minute threshold the right interruption budget
+    in practice, or should drift also weigh how much of the diff is in files
+    the last digest already mentioned?
+session: 18a024c2-0578-473d-b00f-74321cf330e1
+```

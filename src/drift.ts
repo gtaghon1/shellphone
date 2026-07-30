@@ -43,25 +43,44 @@ function commitsSince(root: string, iso: string): number {
 }
 
 /**
+ * `onMissing` is the interesting parameter. A file that cannot be stat'd was
+ * deleted, and a deletion is real drift — but only if we know it happened after
+ * the reference, which we cannot know without an mtime.
+ *
+ * So it depends on who is vouching. When git listed the file it is dirty *now*,
+ * so a missing file is a current, uncommitted deletion: drift. When the reporter
+ * is the session transcript, the edit may predate the last digest entirely, and
+ * counting it is what caused the hook to demand a digest seconds after one was
+ * written. Trust git, don't trust the transcript.
+ */
+function newerThan(root: string, rel: string, t: number, onMissing: boolean): boolean {
+  try {
+    return fs.statSync(path.resolve(root, rel)).mtimeMs > t;
+  } catch {
+    return onMissing;
+  }
+}
+
+/**
  * Dirty files whose mtime is newer than the reference. Files that were edited
  * *and* committed since the reference no longer show as dirty — those are
  * counted by `commitsSince` instead, so nothing falls through the gap.
+ *
+ * Returns null when git could not answer, which is a different fact from an
+ * empty list. Collapsing the two makes a clean tree indistinguishable from a
+ * missing git, and the caller's fallback then replays the whole session.
  */
-function filesModifiedSince(root: string, iso: string, cap = 500): string[] {
+function filesModifiedSince(root: string, iso: string, cap = 500): string[] | null {
   try {
     const t = Date.parse(iso);
     const out: string[] = [];
     for (const rel of git(root, ['ls-files', '-mo', '--exclude-standard']).split('\n')) {
       if (!rel.trim() || out.length >= cap) continue;
-      try {
-        if (fs.statSync(path.resolve(root, rel)).mtimeMs > t) out.push(rel);
-      } catch {
-        /* raced with a delete — not drift worth reporting */
-      }
+      if (newerThan(root, rel, t, true)) out.push(rel); // git vouched: dirty now
     }
     return normalizeChanged(root, out, 50);
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -101,13 +120,20 @@ export function computeDrift(
     };
   }
 
-  const minutes = Math.max(0, (now - Date.parse(since)) / 60000);
+  const t = Date.parse(since);
+  const minutes = Math.max(0, (now - t) / 60000);
   const commits = commitsSince(root, since);
-  let files = filesModifiedSince(root, since);
-  if (!files.length && !commits) {
-    // git had nothing to say (or isn't there); fall back to what we were told.
-    files = normalizeChanged(root, fallbackFiles, 50);
-  }
+  const tracked = filesModifiedSince(root, since);
+  // Only fall back when git could not answer at all. An empty answer from git
+  // is authoritative: the tree is clean, and files this session touched *before*
+  // the last digest are already described by it.
+  const files =
+    tracked ??
+    normalizeChanged(
+      root,
+      fallbackFiles.filter((f) => newerThan(root, f, t, false)),
+      50,
+    );
 
   const moved = files.length > 0 || commits > 0;
   if (!moved) return { ref: since, files, commits, minutes, level: 'fresh', reason: '' };
