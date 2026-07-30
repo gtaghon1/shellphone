@@ -2,5 +2,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 .DS_Store
-.shellphonebuild/
-assets/
+
+# Local shellphone state: digests, manifest, and instruction queue.
+.shellphone
+
+# Staging directory and built .mcpb bundles from scripts/pack-mcpb.sh.
+build/

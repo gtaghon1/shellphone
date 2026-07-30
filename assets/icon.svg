@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="shellphone">
+  <rect width="512" height="512" rx="112" fill="#141821"/>
+  <!-- Lobster Telephone, but for two Claudes: a phone handset whose earpieces
+       end in pincers. The arc-plus-two-cups silhouette is what makes it read as
+       a handset instantly; the pincer notches are the only detail, so it still
+       survives at 32px. -->
+  <g transform="rotate(-35 256 256)">
+    <path d="M140 274 Q256 170 372 274" stroke="#F2542D" stroke-width="48" fill="none" stroke-linecap="round"/>
+    <rect x="98" y="246" width="98" height="112" rx="36" fill="#F2542D"/>
+    <rect x="316" y="246" width="98" height="112" rx="36" fill="#F2542D"/>
+    <path d="M119 366 L147 300 L175 366 Z" fill="#141821"/>
+    <path d="M337 366 L365 300 L393 366 Z" fill="#141821"/>
+  </g>
+</svg>
