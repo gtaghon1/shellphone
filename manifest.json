@@ -7,7 +7,7 @@
   "long_description": "shellphone is a context bridge between Claude Code and Claude chat sessions, so you stop hand-carrying state between them.\n\nWhile you work in Claude Code, it records a short digest of each stretch of work into `.shellphone/state.md` in your repo \u2014 what landed, what state it is in, what decision is open. It also records a standing manifest of what the project *is*: stack, layout, settled decisions and why they were settled, constraints, gotchas. This extension reads those files back, so you can ask \"where is that project at?\" in chat and get an accurate answer without pasting anything.\n\nYou can also send an instruction the other way. It lands in the repo's inbox and is surfaced at the start of your next Claude Code session in that repo, which shows it to you before acting on it.\n\nEverything stays on your machine. shellphone moves state *about* code \u2014 status, decisions, open questions \u2014 never the code itself. There is no backend, no account, and no telemetry.\n\nRequires the shellphone CLI and Claude Code hooks to be installed to produce digests; see the setup guide in the documentation.",
   "author": {
     "name": "Geoffrey Taghon",
-    "email": "geoff.taghon@gmail.com",
+    "email": "gtaghon@netrias.com",
     "url": "https://github.com/gtaghon1"
   },
   "repository": {
