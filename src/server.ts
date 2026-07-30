@@ -5,7 +5,7 @@ import { liveRepos, register, repoNames, resolveRepo } from './registry.js';
 import { appendDigest, latestDigest, makeDigest, recentDigests } from './ledger.js';
 import { appendInstruction, pending, readCursor, readInbox } from './queue.js';
 import { ago, gitBranch, renderDigest, renderInstruction, truncate } from './format.js';
-import { loadConfig } from './paths.js';
+import { loadConfig, normalizeChanged } from './paths.js';
 import { DIGEST_STATUSES } from './types.js';
 
 export const VERSION = '0.1.0';
@@ -248,7 +248,7 @@ export function buildServer(): McpServer {
         status: args.status,
         branch: args.branch ?? gitBranch(entry.path) ?? undefined,
         machine: os.hostname(),
-        changed: args.changed,
+        changed: normalizeChanged(entry.path, args.changed ?? []),
         next_decision: args.next_decision,
         open_questions: args.open_questions,
         session: args.session,

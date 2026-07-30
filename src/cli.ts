@@ -8,6 +8,7 @@ import {
   CONFIG_PATH,
   findRepoRoot,
   loadConfig,
+  normalizeChanged,
   queueDir,
   repoDir,
   saveConfig,
@@ -243,7 +244,10 @@ function cmdDigest(args: Args): void {
   if (!DIGEST_STATUSES.includes(status)) {
     die(`--status must be one of: ${DIGEST_STATUSES.join(', ')}`);
   }
-  const changed = many(args, 'changed').flatMap((v) => v.split(',')).map((s) => s.trim()).filter(Boolean);
+  const changed = normalizeChanged(
+    entry.path,
+    many(args, 'changed').flatMap((v) => v.split(',')),
+  );
   const d = makeDigest({
     repo: entry.name,
     summary,

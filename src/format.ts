@@ -1,4 +1,6 @@
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { normalizeChanged } from './paths.js';
 import type { Digest, Instruction } from './types.js';
 
 /** "3m ago" / "2d ago" — chat reasons about recency far better than about timestamps. */
@@ -30,19 +32,35 @@ export function gitBranch(root: string): string | null {
   }
 }
 
-/** Uncommitted paths — a cheap, honest `changed` list when the transcript is thin. */
+/**
+ * Uncommitted paths — a cheap, honest `changed` list when the transcript is thin.
+ *
+ * Porcelain paths are relative to the *git* root, which is not necessarily the
+ * shellphone root (a repo can be initialised in a subdirectory). Resolve against
+ * the toplevel before re-relativising, or the ledger records paths that resolve
+ * to nothing.
+ */
 export function gitDirtyFiles(root: string, limit = 20): string[] {
   try {
-    const out = execFileSync('git', ['-C', root, 'status', '--porcelain'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return out
+    const git = (args: string[]) =>
+      execFileSync('git', ['-C', root, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    const top = git(['rev-parse', '--show-toplevel']).trim() || root;
+    const paths = git(['status', '--porcelain'])
       .split('\n')
       .filter(Boolean)
-      .map((l) => l.slice(3).trim())
-      .filter((p) => !p.startsWith('.shellphone/'))
-      .slice(0, limit);
+      .map((l) => {
+        const entry = l.slice(3).trim();
+        // Renames arrive as `old -> new`; only the destination still exists.
+        const arrow = entry.lastIndexOf(' -> ');
+        const p = arrow === -1 ? entry : entry.slice(arrow + 4);
+        // Porcelain quotes paths containing spaces or control characters.
+        return p.startsWith('"') && p.endsWith('"') ? JSON.parse(p) : p;
+      })
+      .map((p: string) => path.resolve(top, p));
+    return normalizeChanged(root, paths, limit);
   } catch {
     return [];
   }

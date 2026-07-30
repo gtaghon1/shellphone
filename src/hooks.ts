@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { findRepoRoot, loadConfig } from './paths.js';
+import { findRepoRoot, loadConfig, normalizeChanged } from './paths.js';
 import { hasDigestForSession } from './ledger.js';
 import { takeAllPending, takeUnannounced, markAnnounced } from './queue.js';
 import { register, resolveRepo } from './registry.js';
@@ -47,8 +47,12 @@ async function readInput(): Promise<HookInput> {
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Update']);
 
-/** Files this session actually edited, mined from the transcript's tool calls. */
-function filesTouched(transcriptPath: string | undefined, limit = 25): string[] {
+/**
+ * Files this session actually edited, mined from the transcript's tool calls.
+ * Scoped to `root`: a session routinely writes scratchpad files, other repos,
+ * and temp files, and none of those belong in this repo's ledger.
+ */
+function filesTouched(root: string, transcriptPath: string | undefined, limit = 25): string[] {
   if (!transcriptPath || !fs.existsSync(transcriptPath)) return [];
   const found = new Set<string>();
   try {
@@ -72,7 +76,7 @@ function filesTouched(transcriptPath: string | undefined, limit = 25): string[] 
   } catch {
     return [];
   }
-  return [...found].slice(0, limit);
+  return normalizeChanged(root, found, limit);
 }
 
 function emit(obj: unknown): void {
@@ -130,7 +134,7 @@ export async function hookStop(): Promise<void> {
 
   const entry = resolveRepo(root) ?? register(root);
   const branch = gitBranch(root);
-  const touched = filesTouched(input.transcript_path);
+  const touched = filesTouched(root, input.transcript_path);
   const changed = touched.length ? touched : gitDirtyFiles(root);
 
   const detected = [

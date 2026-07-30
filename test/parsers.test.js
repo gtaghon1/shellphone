@@ -9,7 +9,8 @@ const { formatDigest, parseLedger, makeDigest, appendDigest, readDigests, hasDig
   await import('../dist/ledger.js');
 const { parseInbox, appendInstruction, pending, consumeInstruction, takeUnannounced, takeAllPending } =
   await import('../dist/queue.js');
-const { ago, truncate } = await import('../dist/format.js');
+const { ago, truncate, gitDirtyFiles } = await import('../dist/format.js');
+const { relativeToRepo, normalizeChanged } = await import('../dist/paths.js');
 
 function tmpRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shellphone-test-'));
@@ -131,6 +132,80 @@ test('inbox parser tolerates a hand-written file', () => {
   assert.deepEqual(parsed, [
     { id: 'aa11bb', sent: '2026-01-01T00:00:00Z', consumed: undefined, text: 'hand written' },
   ]);
+});
+
+// ---- changed-path scoping (regression: instruction 3880ea) ----------------
+
+test('absolute paths inside the repo become repo-relative', () => {
+  const dir = tmpRepo();
+  assert.equal(relativeToRepo(dir, path.join(dir, 'src', 'ledger.ts')), 'src/ledger.ts');
+  assert.equal(relativeToRepo(dir, 'src/ledger.ts'), 'src/ledger.ts', 'already-relative is a no-op');
+});
+
+test('paths outside the repo root are rejected', () => {
+  const dir = tmpRepo();
+  const outside = tmpRepo();
+  assert.equal(relativeToRepo(dir, path.join(outside, 'scratch.mjs')), null);
+  assert.equal(relativeToRepo(dir, '/etc/passwd'), null);
+  assert.equal(relativeToRepo(dir, '../escape.ts'), null);
+  assert.equal(relativeToRepo(dir, dir), null, 'the root itself is not a changed file');
+});
+
+test('a repo reached through a symlink still owns its own files', () => {
+  // macOS resolves /tmp to /private/tmp; without realpath handling every file
+  // in a tmpdir-based repo would look like it escaped the root.
+  const dir = tmpRepo();
+  const link = path.join(os.tmpdir(), `shellphone-link-${process.pid}`);
+  try {
+    fs.symlinkSync(dir, link, 'dir');
+    assert.equal(relativeToRepo(link, path.join(dir, 'src/a.ts')), 'src/a.ts');
+    assert.equal(relativeToRepo(dir, path.join(link, 'src/a.ts')), 'src/a.ts');
+  } finally {
+    fs.unlinkSync(link); // a symlink to a directory: unlink, not rm
+  }
+});
+
+test('normalizeChanged drops escapees, dedupes, and hides our own files', () => {
+  const dir = tmpRepo();
+  const outside = tmpRepo();
+  assert.deepEqual(
+    normalizeChanged(dir, [
+      path.join(dir, 'src/b.ts'),
+      'src/a.ts',
+      path.join(dir, 'src/a.ts'), // same file, two spellings
+      path.join(outside, 'scratchpad/mcpclient.mjs'), // the leak
+      path.join(dir, '.shellphone/state.md'), // self-referential noise
+      '',
+    ]),
+    ['src/a.ts', 'src/b.ts'],
+  );
+});
+
+test('normalizeChanged bounds the list', () => {
+  const dir = tmpRepo();
+  const many = Array.from({ length: 60 }, (_, i) => `src/f${String(i).padStart(2, '0')}.ts`);
+  assert.equal(normalizeChanged(dir, many, 25).length, 25);
+});
+
+test('a digest written with absolute paths lands relative in the ledger', () => {
+  // The end-to-end invariant the instruction actually asked for.
+  const dir = tmpRepo();
+  const outside = tmpRepo();
+  appendDigest(
+    dir,
+    makeDigest({
+      repo: 'r',
+      status: 'wip',
+      summary: 'x',
+      changed: normalizeChanged(dir, [
+        path.join(dir, 'src/hooks.ts'),
+        path.join(outside, 'scratch.mjs'),
+      ]),
+    }),
+  );
+  const [d] = readDigests(dir);
+  assert.deepEqual(d.changed, ['src/hooks.ts']);
+  assert.ok(!fs.readFileSync(path.join(dir, '.shellphone/state.md'), 'utf8').includes(outside));
 });
 
 // ---- format ---------------------------------------------------------------
