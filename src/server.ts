@@ -40,8 +40,14 @@ export function buildServer(): McpServer {
       instructions:
         'shellphone bridges Claude Code and Claude Chat. Read tools (list_repos, ' +
         'get_state, get_queue_status) report what Code has been doing — call them ' +
-        'freely. send_instruction steers a coding session and is an instruction ' +
-        'injection: confirm the exact wording with the user before calling it.',
+        'freely. get_state returns both what a project IS (its manifest) and what ' +
+        'just changed (its digests); do not confuse the two, and prefer the manifest ' +
+        'when reasoning about structure or settled decisions. send_instruction steers ' +
+        'a coding session and is an instruction injection: confirm the exact wording ' +
+        'with the user before calling it. ' +
+        'Note: this server is started once by the client. If a tool or field you ' +
+        'expect is missing, the process may predate it — restarting the client is ' +
+        'more likely to be the fix than requesting the feature again.',
     },
   );
 
@@ -94,9 +100,16 @@ export function buildServer(): McpServer {
     {
       title: 'Get repo state',
       description:
-        'The latest digest for a repo plus a short rolling history. This is what Code ' +
-        'wrote about itself at session end — summary, changed files, the decision it ' +
-        'is waiting on, and open questions. No code is exposed, only state about it.',
+        'Everything shellphone knows about a repo, in two clearly separated parts. ' +
+        'First, what the project IS — its manifest: purpose, stack, layout, settled ' +
+        'decisions and why they were settled, constraints, gotchas, open ' +
+        'deliberations. Second, what just CHANGED — the latest session digest plus a ' +
+        'short rolling history: summary, changed files, the decision Code is waiting ' +
+        'on, open questions. Read the manifest part before advising on anything ' +
+        'structural; read the digest part to know where things currently stand. If ' +
+        'the manifest section is absent, the repo has never been surveyed — say so ' +
+        'rather than inferring what the project is from its digests. No code is ' +
+        'exposed, only state about it.',
       inputSchema: {
         repo: z.string().describe('Repo name from list_repos (or an absolute path).'),
         limit: z
