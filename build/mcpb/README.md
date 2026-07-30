@@ -54,51 +54,6 @@ already have, and re-running it is a no-op.
 
 It also installs a `/digest` slash command.
 
-## Install as a Claude Desktop extension
-
-Download `shellphone-<version>.mcpb` from the
-[releases page](https://github.com/gtaghon1/shellphone/releases) and double-click
-it, or drag it into Claude Desktop. No Node install needed — Claude Desktop
-ships its own runtime.
-
-The extension is the **read** side: it lets a chat session see your repos. To
-get digests written in the first place you also need the CLI and hooks:
-
-```bash
-npm install -g shellphone
-cd ~/src/your-repo
-shellphone init
-shellphone install-hooks --global
-```
-
-Then run `/survey` once in a Claude Code session there, and `/digest` whenever
-you want the chat side brought up to date.
-
-### Example prompts
-
-Once a repo has been surveyed and has at least one digest:
-
-- **"What am I working on?"** — lists every registered repo with its status,
-  one-liner, and anything waiting (`list_repos`)
-- **"Where is lattice-relax at, and what is it?"** — the project manifest plus
-  the latest digests (`get_state`)
-- **"Tell lattice-relax to use the adaptive schedule, seeded from the repo
-  state hash."** — queues an instruction for the next Claude Code session there
-  (`send_instruction`)
-- **"Did Code pick up what I sent?"** — whether the instruction was shown to
-  Code and whether it acted on it (`get_queue_status`)
-
-### Trying it without a real project
-
-There is no account to hand out, so there is a seed script instead. It builds a
-small populated repo using only the CLI, so every tool can be exercised before
-you have run a single Claude Code session:
-
-```bash
-bash scripts/demo-seed.sh          # creates ./shellphone-demo
-shellphone forget lattice-relax    # undo, then delete the directory
-```
-
 ## Two documents, two clocks
 
 A digest answers *what just changed*. It cannot answer *what is this*, and a
@@ -311,21 +266,6 @@ model-written prose full of colons, quotes, and code fences has to survive a
 YAML round trip, and the queue has to deliver each instruction exactly once
 without losing one whose session died mid-flight.
 
-## Privacy Policy
-
-shellphone runs entirely on your machine. It has no backend, no accounts, and no
-telemetry, and the author receives nothing — there is no server for data to be
-sent to. It reads and writes plain-text files under `.shellphone/` in your repos
-and `~/.shellphone/`, and reads repository metadata via `git`. It does not read,
-transmit, or store your source code.
-
-The one case where data leaves your machine is opt-in and takes two deliberate
-steps: running `shellphone serve` and then exposing that port through a tunnel
-you operate, so claude.ai can reach it. That path is off by default.
-
-Full policy, including retention and deletion: **[PRIVACY.md](./PRIVACY.md)**
-(<https://github.com/gtaghon1/shellphone/blob/master/PRIVACY.md>).
-
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT

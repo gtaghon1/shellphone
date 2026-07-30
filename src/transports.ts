@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import express, { type Request, type Response, type NextFunction } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { buildServer, VERSION } from './server.js';
@@ -54,6 +54,10 @@ export interface HttpOptions {
 }
 
 export async function runHttp(opts: HttpOptions = {}): Promise<void> {
+  // Loaded here rather than at module scope: the CLI is on the hot path for
+  // every hook fire, and stdio never needs an HTTP server. Also keeps express
+  // out of the desktop-extension bundle's startup entirely.
+  const { default: express } = await import('express');
   const cfg = loadConfig();
   const host = opts.host ?? cfg.host;
   const port = opts.port ?? cfg.port;
