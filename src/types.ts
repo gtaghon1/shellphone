@@ -34,6 +34,46 @@ export interface Digest {
   open_questions?: string[];
 }
 
+/**
+ * What a project *is*, as opposed to what just happened to it.
+ *
+ * Digests are volatile and append-only; a manifest is durable and overwritten.
+ * Keeping them in separate files is the whole point — a reader who has never
+ * seen the repo needs the manifest first and the digest second.
+ *
+ * The fields are chosen to generalise across repo types. The test each one had
+ * to pass: does knowing this change what a reader would *do* or *advise*? Only
+ * `layout` and `decisions` are close calls, and both earn it — layout is how you
+ * answer "where would that live", and decisions is how you stop someone
+ * re-litigating a choice that was already made deliberately.
+ */
+export interface Manifest {
+  name: string;
+  /** One sentence. What this is, for someone who has never heard of it. */
+  one_liner: string;
+  /** What it is for, and who or what it serves. A short paragraph. */
+  purpose?: string;
+  /** Languages, runtimes, notable dependencies. */
+  stack?: string[];
+  /** Key directories and the role each one plays. */
+  layout?: { path: string; role: string }[];
+  /** How to build, test, and run it. Free-form keys — projects differ. */
+  entry_points?: Record<string, string>;
+  /** Settled choices, with the reasoning that settled them. */
+  decisions?: { what: string; why?: string }[];
+  /** Known limits and explicit non-goals. */
+  constraints?: string[];
+  /** Things that will bite someone who doesn't know them. */
+  gotchas?: string[];
+  /** Live deliberations — unresolved, and known to be unresolved. */
+  open?: string[];
+
+  surveyed: string; // ISO 8601
+  /** Git rev at survey time, so staleness can be measured in commits. */
+  commit?: string;
+  machine?: string;
+}
+
 /** One instruction sent from chat toward Code. */
 export interface Instruction {
   id: string;

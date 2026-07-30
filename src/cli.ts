@@ -9,6 +9,7 @@ import {
   findRepoRoot,
   loadConfig,
   normalizeChanged,
+  nowIso,
   queueDir,
   repoDir,
   saveConfig,
@@ -19,8 +20,21 @@ import { liveRepos, register, resolveRepo, unregister } from './registry.js';
 import { ago, gitBranch, truncate } from './format.js';
 import { runHook } from './hooks.js';
 import { computeDrift, driftNotice } from './drift.js';
+import {
+  readManifest,
+  writeManifest,
+  renderManifest,
+  manifestAge,
+  manifestPath,
+  headCommit,
+} from './manifest.js';
 import { runHttp, runStdio } from './transports.js';
-import { DIGEST_STATUSES, type DigestStatus, type RepoEntry } from './types.js';
+import {
+  DIGEST_STATUSES,
+  type DigestStatus,
+  type RepoEntry,
+  type Manifest,
+} from './types.js';
 import { VERSION } from './server.js';
 
 // ---- tiny arg parser (no dependency earns its way in here) ----------------
@@ -114,6 +128,10 @@ function cmdInit(args: Args): void {
   say();
   say('Then connect the MCP server. For Claude Code, in this repo:');
   say(c.cyan('  claude mcp add shellphone -- shellphone mcp'));
+  say();
+  say('Finally, in a Claude Code session in this repo, survey the project so');
+  say('chat knows what it IS and not just what changed last:');
+  say(c.cyan('  /survey'));
 }
 
 function cmdStatus(): void {
@@ -273,6 +291,55 @@ function cmdDigest(args: Args): void {
   say(c.green(`digest recorded for ${entry.name} (${d.status})`));
 }
 
+/**
+ * `shellphone survey --stdin < manifest.json` — the fallback for when the MCP
+ * server isn't connected, mirroring `shellphone digest`. A manifest is far too
+ * structured for command-line flags, so this one takes JSON on stdin.
+ */
+async function cmdSurvey(args: Args): Promise<void> {
+  const entry = mustResolve(one(args, 'repo') ?? args._[0]);
+  if (!has(args, 'stdin')) {
+    die('usage: shellphone survey [repo] --stdin < manifest.json  (or use /survey in Claude Code)');
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch (err) {
+    die(`stdin is not valid JSON: ${(err as Error).message}`);
+  }
+  if (!raw.name || !raw.one_liner) die('manifest needs at least `name` and `one_liner`');
+
+  writeManifest(entry.path, {
+    ...(raw as unknown as Manifest),
+    name: String(raw.name),
+    one_liner: String(raw.one_liner),
+    surveyed: nowIso(),
+    commit: headCommit(entry.path),
+    machine: os.hostname(),
+  });
+  say(c.green(`manifest recorded for ${entry.name}`));
+}
+
+function cmdManifest(args: Args): void {
+  const entry = mustResolve(args._[0]);
+  const m = readManifest(entry.path);
+  if (!m) {
+    say(c.dim(`${entry.name}: no manifest yet — run \`/survey\` in Claude Code there`));
+    process.exitCode = 1;
+    return;
+  }
+  if (has(args, 'path')) return say(manifestPath(entry.path));
+  if (has(args, 'json')) return say(JSON.stringify(m, null, 2));
+  const age = manifestAge(entry.path, m);
+  say(renderManifest(m, age));
+  if (age.commits >= 25 || age.days >= 60) {
+    say('');
+    say(c.yellow(`This manifest may be behind — consider re-running /survey.`));
+  }
+}
+
 /** Statusline / PS1 fragment. Prints nothing when there's nothing to say. */
 function cmdPrompt(): void {
   const root = findRepoRoot(process.cwd());
@@ -319,6 +386,45 @@ Prefer \`changed\` paths you actually edited this session, repo-relative.
 Then stop. Do not summarise for the user or start new work.
 `;
 
+/**
+ * `/survey` — writes the standing manifest. Separate from `/digest` because the
+ * two answer different questions on different clocks: what this is, versus what
+ * just happened to it.
+ */
+const SURVEY_COMMAND = `---
+description: Survey this repo and write/refresh its shellphone project manifest
+---
+
+Survey this repository and record a shellphone project manifest.
+
+Actually look before you write. At minimum:
+- read the README and any docs/ or design notes
+- walk the directory structure to identify real subsystems
+- check package/build/test config for stack and entry points
+- look for existing decision records, ADRs, or a CONTRIBUTING file
+- check whether a manifest already exists (\`shellphone manifest\`) and treat it
+  as a prior to correct, not as gospel to preserve
+
+Then call the \`record_manifest\` tool from the "shellphone" MCP server. If that
+server is not connected, pipe the same fields as JSON to \`shellphone survey
+--stdin\` instead.
+
+This is read by someone with no repo access who has never seen the project —
+a Claude Chat session. Write for them.
+
+Record only what you verified. A confident wrong manifest is worse than a thin
+one: nobody downstream can tell which parts you were sure about. If you could
+not determine something, leave the field out rather than guessing.
+
+For \`decisions\`, include the *why*. A decision without its reasoning does not
+stop anyone re-litigating it, which is the only reason the field exists.
+
+Put genuinely unresolved things in \`open\` — not things you merely did not look
+into.
+
+Then stop. Do not start new work.
+`;
+
 function cmdInstallHooks(args: Args): void {
   const global = has(args, 'global');
   const claudeDir = global
@@ -326,11 +432,15 @@ function cmdInstallHooks(args: Args): void {
     : path.join(path.resolve(args._[0] ?? process.cwd()), '.claude');
   const settingsPath = path.join(claudeDir, 'settings.json');
 
-  const cmdPath = path.join(claudeDir, 'commands', 'digest.md');
-  if (!fs.existsSync(cmdPath)) {
+  for (const [name, body] of [
+    ['digest', DIGEST_COMMAND],
+    ['survey', SURVEY_COMMAND],
+  ] as const) {
+    const cmdPath = path.join(claudeDir, 'commands', `${name}.md`);
+    if (fs.existsSync(cmdPath)) continue;
     fs.mkdirSync(path.dirname(cmdPath), { recursive: true });
-    fs.writeFileSync(cmdPath, DIGEST_COMMAND);
-    say(c.green(`installed /digest → ${cmdPath}`));
+    fs.writeFileSync(cmdPath, body);
+    say(c.green(`installed /${name} → ${cmdPath}`));
   }
 
   const base = shellphoneCommand();
@@ -408,6 +518,8 @@ const HELP = `🦞📞 shellphone ${VERSION} — a context bridge between Claude
   shellphone install-hooks [--global]   wire the Claude Code hooks + /digest
   shellphone status                     one line per repo: status, age, summary
   shellphone attach [repo] [--watch]    full latest digest + pending instructions
+  shellphone manifest [repo] [--json]  what this project is (written by /survey)
+  shellphone survey [repo] --stdin      write a manifest from JSON on stdin
   shellphone inbox [repo] [--all]       instructions sent from chat
   shellphone ack [repo] <id>            mark an instruction acted on
   shellphone send <repo> <text...>      queue an instruction locally (test the write path)
@@ -449,6 +561,10 @@ async function main(): Promise<void> {
       return cmdSend(args);
     case 'digest':
       return cmdDigest(args);
+    case 'manifest':
+      return cmdManifest(args);
+    case 'survey':
+      return await cmdSurvey(args);
     case 'prompt':
       return cmdPrompt();
     case 'config':

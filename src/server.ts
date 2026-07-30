@@ -5,9 +5,17 @@ import { liveRepos, register, repoNames, resolveRepo } from './registry.js';
 import { appendDigest, latestDigest, makeDigest, recentDigests } from './ledger.js';
 import { appendInstruction, pending, readCursor, readInbox } from './queue.js';
 import { ago, gitBranch, renderDigest, renderInstruction, truncate } from './format.js';
-import { loadConfig, normalizeChanged } from './paths.js';
+import { loadConfig, normalizeChanged, nowIso } from './paths.js';
 import { computeDrift, driftNotice } from './drift.js';
-import { DIGEST_STATUSES } from './types.js';
+import {
+  readManifest,
+  writeManifest,
+  renderManifest,
+  manifestAge,
+  manifestPath,
+  headCommit,
+} from './manifest.js';
+import { DIGEST_STATUSES, type Manifest } from './types.js';
 
 export const VERSION = '0.1.0';
 
@@ -64,12 +72,15 @@ export function buildServer(): McpServer {
         .sort((a, b) => b.t - a.t);
 
       const lines = rows.map(({ e, d, p }) => {
+        const man = readManifest(e.path);
+        // The one-liner is what makes a list of repo names mean anything.
+        const id = man ? `\n  _${truncate(man.one_liner, 120)}_` : '';
         const head = `- **${e.name}** · \`${d?.branch ?? gitBranch(e.path) ?? 'no-branch'}\``;
-        if (!d) return `${head} · no digests yet`;
+        if (!d) return `${head} · no digests yet${id}`;
         const flag = p ? ` · 🦞 ${p} pending instruction${p === 1 ? '' : 's'}` : '';
         const notice = driftNotice(computeDrift(e.path, d.ts));
         return (
-          `${head} · **${d.status}** · ${ago(d.ts)}${flag}\n  ${truncate(d.summary, 160)}` +
+          `${head} · **${d.status}** · ${ago(d.ts)}${flag}${id}\n  ${truncate(d.summary, 160)}` +
           (d.next_decision ? `\n  next: ${truncate(d.next_decision, 120)}` : '') +
           (notice ? `\n  ${notice}` : '')
         );
@@ -102,10 +113,20 @@ export function buildServer(): McpServer {
       const entry = resolveRepo(repo);
       if (!entry) return unknownRepo(repo);
       const digests = recentDigests(entry.path, limit ?? 5);
+      const man = readManifest(entry.path);
+      // "What this is" before "what just happened" — a reader who has never seen
+      // the repo cannot use the second without the first. Kept in separate
+      // sections so a session digest is never mistaken for a standing fact.
+      const identity = man
+        ? `## what this project is\n\n${renderManifest(man, manifestAge(entry.path, man))}\n\n---\n\n`
+        : '';
+
       if (!digests.length) {
         return text(
-          `**${entry.name}** is registered but has no digests yet — Code has not ` +
-            `completed a session there since shellphone was installed.`,
+          `# ${entry.name} (${entry.machine})\n\n${identity}` +
+            `**${entry.name}** is registered but has no digests yet — Code has not ` +
+            `completed a session there since shellphone was installed.` +
+            (man ? '' : ' No manifest either: ask Code to run `/survey` in that repo.'),
         );
       }
       const p = pending(entry.path);
@@ -123,7 +144,9 @@ export function buildServer(): McpServer {
         ? `\n\n---\n\n## earlier (${rest.length})\n\n` +
           rest.map((d) => `- **${d.ts}** · ${d.status} · ${truncate(d.summary, 140)}`).join('\n')
         : '';
-      return text(`${head}${banner}\n\n## latest\n\n${renderDigest(latest!)}${history}${queue}`);
+      return text(
+        `${head}${banner}\n\n${identity}## what just changed\n\n${renderDigest(latest!)}${history}${queue}`,
+      );
     },
   );
 
@@ -262,6 +285,95 @@ export function buildServer(): McpServer {
       });
       appendDigest(entry.path, d);
       return text(`Digest recorded for **${entry.name}** (${d.status}) at ${d.ts}.`);
+    },
+  );
+
+  server.registerTool(
+    'record_manifest',
+    {
+      title: 'Record project manifest',
+      description:
+        'Claude Code calls this after surveying a repo, to record what the project ' +
+        'IS — as opposed to what changed this session. Overwrites the previous ' +
+        'manifest. Survey the actual repo before calling: read the README, walk the ' +
+        'directory structure, check build/test config, and look for existing design ' +
+        'docs. Record only what you verified; a confident wrong manifest is worse ' +
+        'than a thin one, because nobody downstream can tell it is wrong.',
+      inputSchema: {
+        repo: z.string().describe('Repo name or absolute path.'),
+        name: z.string().describe('Project name.'),
+        one_liner: z
+          .string()
+          .max(200)
+          .describe('One sentence, for someone who has never heard of this project.'),
+        purpose: z
+          .string()
+          .max(1200)
+          .optional()
+          .describe('What it is for and who or what it serves. A short paragraph.'),
+        stack: z
+          .array(z.string())
+          .max(30)
+          .optional()
+          .describe('Languages, runtimes, notable dependencies.'),
+        layout: z
+          .array(z.object({ path: z.string(), role: z.string() }))
+          .max(40)
+          .optional()
+          .describe('Key directories and the role each plays. How to answer "where would that live".'),
+        entry_points: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe('How to build, test, run, deploy. Keys are free-form — projects differ.'),
+        decisions: z
+          .array(z.object({ what: z.string(), why: z.string().optional() }))
+          .max(30)
+          .optional()
+          .describe(
+            'Settled choices and the reasoning behind them. This is what stops a ' +
+              'reader re-litigating something already decided deliberately — include ' +
+              'the why, or the entry does not do its job.',
+          ),
+        constraints: z
+          .array(z.string())
+          .max(20)
+          .optional()
+          .describe('Known limits and explicit non-goals.'),
+        gotchas: z
+          .array(z.string())
+          .max(20)
+          .optional()
+          .describe('Things that will bite someone who does not already know them.'),
+        open: z
+          .array(z.string())
+          .max(20)
+          .optional()
+          .describe('Live deliberations — genuinely unresolved, and known to be.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (args) => {
+      const entry = resolveRepo(args.repo) ?? register(args.repo);
+      const m: Manifest = {
+        name: args.name,
+        one_liner: args.one_liner,
+        purpose: args.purpose,
+        stack: args.stack,
+        layout: args.layout,
+        entry_points: args.entry_points,
+        decisions: args.decisions,
+        constraints: args.constraints,
+        gotchas: args.gotchas,
+        open: args.open,
+        surveyed: nowIso(),
+        commit: headCommit(entry.path),
+        machine: os.hostname(),
+      };
+      writeManifest(entry.path, m);
+      return text(
+        `Manifest recorded for **${entry.name}** at ${manifestPath(entry.path)}.\n\n` +
+          `get_state will now lead with it. Re-run \`/survey\` when the project reshapes.`,
+      );
     },
   );
 

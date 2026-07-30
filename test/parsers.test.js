@@ -13,6 +13,8 @@ const { parseInbox, appendInstruction, pending, consumeInstruction, takeUnannoun
 const { ago, truncate, gitDirtyFiles } = await import('../dist/format.js');
 const { relativeToRepo, normalizeChanged } = await import('../dist/paths.js');
 const { computeDrift, driftNotice } = await import('../dist/drift.js');
+const { parseManifest, formatManifest, readManifest, writeManifest, manifestAge } =
+  await import('../dist/manifest.js');
 
 function tmpRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shellphone-test-'));
@@ -208,6 +210,92 @@ test('a digest written with absolute paths lands relative in the ledger', () => 
   const [d] = readDigests(dir);
   assert.deepEqual(d.changed, ['src/hooks.ts']);
   assert.ok(!fs.readFileSync(path.join(dir, '.shellphone/state.md'), 'utf8').includes(outside));
+});
+
+// ---- manifest (instruction e32365) ----------------------------------------
+
+test('manifest survives a format → parse round trip', () => {
+  const m = {
+    name: 'redline',
+    one_liner: 'A racing sim with a deterministic physics core.',
+    purpose: 'Explores fixed-timestep determinism for replay and netcode.',
+    stack: ['C++20', 'CMake'],
+    layout: [{ path: 'src/physics', role: 'fixed-timestep solver' }],
+    entry_points: { build: 'cmake --build build', test: 'ctest' },
+    decisions: [{ what: 'fixed 240Hz timestep', why: 'replay determinism' }],
+    constraints: ['no networking in v1'],
+    gotchas: ['the solver assumes SI units throughout'],
+    open: ['tyre model: brush vs Pacejka'],
+    surveyed: '2026-07-30T12:00:00Z',
+    commit: 'abc1234',
+    machine: 'box.local',
+  };
+  assert.deepEqual(parseManifest(formatManifest(m)), m);
+});
+
+test('a manifest with only the required fields round trips', () => {
+  const m = { name: 'x', one_liner: 'y', surveyed: '2026-07-30T12:00:00Z' };
+  const got = parseManifest(formatManifest(m));
+  assert.equal(got.name, 'x');
+  assert.equal(got.one_liner, 'y');
+  assert.equal(got.stack, undefined, 'absent fields stay absent, not empty arrays');
+});
+
+test('a manifest missing identity is rejected outright', () => {
+  // Without name + one_liner it cannot do its one job, so it is not a manifest.
+  assert.equal(parseManifest('```yaml\nstack: [ts]\n```'), null);
+  assert.equal(parseManifest('no fence here'), null);
+  assert.equal(parseManifest('```yaml\n: : bad :\n  - [\n```'), null);
+});
+
+test('decisions accept bare strings as well as what/why pairs', () => {
+  // Hand-editing is a supported path; a human will write a plain list.
+  const m = parseManifest(
+    '```yaml\nname: r\none_liner: o\ndecisions:\n  - just a string\n  - what: paired\n    why: because\n```',
+  );
+  assert.deepEqual(m.decisions, [{ what: 'just a string' }, { what: 'paired', why: 'because' }]);
+});
+
+test('manifest writes and reads back from disk, and overwrites', () => {
+  const dir = tmpRepo();
+  assert.equal(readManifest(dir), null);
+  writeManifest(dir, { name: 'a', one_liner: 'first', surveyed: '2026-01-01T00:00:00Z' });
+  writeManifest(dir, { name: 'a', one_liner: 'second', surveyed: '2026-01-02T00:00:00Z' });
+  assert.equal(readManifest(dir).one_liner, 'second', 'refresh replaces, not appends');
+  const raw = fs.readFileSync(path.join(dir, '.shellphone/manifest.md'), 'utf8');
+  assert.ok(!raw.includes('first'), 'no stale copy left behind');
+  assert.match(raw, /^# shellphone manifest/);
+});
+
+test('manifest and ledger live in separate files', () => {
+  // The instruction's actual requirement: identity must not be conflated with
+  // session digests, in either direction.
+  const dir = tmpRepo();
+  writeManifest(dir, { name: 'a', one_liner: 'ident', surveyed: '2026-01-01T00:00:00Z' });
+  appendDigest(dir, makeDigest({ repo: 'a', status: 'wip', summary: 'a session happened' }));
+  assert.equal(readManifest(dir).one_liner, 'ident');
+  assert.equal(readDigests(dir).length, 1, 'manifest is not parsed as a digest');
+  assert.ok(!fs.readFileSync(path.join(dir, '.shellphone/state.md'), 'utf8').includes('ident'));
+});
+
+test('manifest age reports commits since the surveyed rev', () => {
+  const { dir, run } = gitRepo();
+  const head = execFileSync('git', ['-C', dir, 'rev-parse', '--short', 'HEAD'], {
+    encoding: 'utf8',
+  }).trim();
+  const m = { name: 'a', one_liner: 'o', surveyed: new Date().toISOString(), commit: head };
+  assert.equal(manifestAge(dir, m).commits, 0);
+  fs.writeFileSync(path.join(dir, 'b.ts'), 'x');
+  run('add', '-A');
+  run('commit', '-qm', 'b');
+  assert.equal(manifestAge(dir, m).commits, 1);
+});
+
+test('manifest age survives a rev that no longer exists', () => {
+  // Rebased, or read from a fresh clone. Must not throw.
+  const { dir } = gitRepo();
+  const m = { name: 'a', one_liner: 'o', surveyed: new Date().toISOString(), commit: 'deadbee' };
+  assert.equal(manifestAge(dir, m).commits, 0);
 });
 
 // ---- drift ----------------------------------------------------------------

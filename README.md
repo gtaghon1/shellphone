@@ -54,6 +54,41 @@ already have, and re-running it is a no-op.
 
 It also installs a `/digest` slash command.
 
+## Two documents, two clocks
+
+A digest answers *what just changed*. It cannot answer *what is this*, and a
+reader who has never seen the repo needs the second question answered first.
+
+So there are two files, deliberately not one:
+
+| | `state.md` | `manifest.md` |
+|---|---|---|
+| answers | what just changed | what this project is |
+| written by | `/digest`, or the stop-hook | `/survey`, on demand |
+| lifecycle | append-only, one entry per drift | overwritten in place |
+| changes | every session | when the project reshapes |
+
+```bash
+/survey                     # in Claude Code — reads the repo, writes the manifest
+shellphone manifest         # read it back
+shellphone manifest --json  # ...as JSON
+```
+
+The manifest records identity, stack, layout, entry points, **settled decisions
+with their reasoning**, constraints, gotchas, and open deliberations. The
+decisions field is the one that earns its place: a decision without its *why*
+doesn't stop anyone re-litigating it, which is the only reason to record it.
+
+`get_state` leads with the manifest and follows with the digest, under separate
+headings, so a standing fact is never mistaken for something that happened last
+Tuesday. `list_repos` shows each repo's one-liner, which is what makes a list of
+repo names mean anything.
+
+Staleness here is **reported, not thresholded** — you get "surveyed 12d ago, 40
+commits since" and make your own call. Two hundred commits of bugfixes may not
+change what a project is, while one commit adding a subsystem does; a hard
+threshold would only cry wolf.
+
 ## Drift, or: when does a digest get written
 
 Digests work like context compaction. There's a verb you invoke whenever you
@@ -137,7 +172,8 @@ nothing about your repos. Everything under `/mcp` requires the bearer token.
 | `get_state(repo, limit)` | read | latest digest + rolling history |
 | `get_queue_status(repo)` | read | announced vs consumed, per instruction |
 | `send_instruction(repo, text)` | **write** | queues to `.shellphone/queue/inbox.md` |
-| `record_digest(...)` | write (Code-side) | what the stop-hook asks Claude to call |
+| `record_digest(...)` | write (Code-side) | what `/digest` and the stop-hook call |
+| `record_manifest(...)` | write (Code-side) | what `/survey` calls |
 
 Read tools are cheap and safe. `send_instruction` is an instruction injection into
 a coding agent, and is described to Chat as something to confirm with you first.
@@ -147,6 +183,8 @@ a coding agent, and is described to Chat as something to confirm with you first.
 ```
 shellphone status                    one line per repo: status, age, summary
 shellphone attach [repo] [--watch]   full latest digest + pending instructions
+shellphone manifest [repo] [--json]  what this project is
+shellphone survey [repo] --stdin     write a manifest from JSON (CLI fallback for /survey)
 shellphone inbox [repo] [--all]      instructions sent from chat
 shellphone ack [repo] <id>           mark an instruction acted on
 shellphone send <repo> <text...>     queue an instruction locally (test the write path)
@@ -184,6 +222,7 @@ running in confirmation mode first.
 
 ```
 <repo>/.shellphone/
+  manifest.md           what the project is — overwritten by /survey
   state.md              the ledger — append-only markdown + fenced YAML
   queue/inbox.md        instructions from chat, pending/consumed in the heading
   queue/cursor.json     which ids Code has been shown (machine-only)
