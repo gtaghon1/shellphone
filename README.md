@@ -48,9 +48,51 @@ already have, and re-running it is a no-op.
 
 | Hook | What it does |
 |---|---|
-| `Stop` | Blocks once per session to have Claude write its digest, then gets out of the way |
+| `Stop` | Asks for a digest, but only once the ledger has gone stale (see below) |
 | `SessionStart` | Hands over any instruction still pending from chat |
 | `UserPromptSubmit` | Catches instructions that land mid-session |
+
+It also installs a `/digest` slash command.
+
+## Drift, or: when does a digest get written
+
+Digests work like context compaction. There's a verb you invoke whenever you
+want one, a passive signal that builds up, and an automatic trigger at the far
+end that you'll rarely hit.
+
+| Context window | shellphone |
+|---|---|
+| `/compact` | `/digest` — write one now |
+| "context left until auto-compact" | drift, shown in `shellphone status` *and* to Chat |
+| auto-compact at the threshold | `Stop` hook asks, once drift is stale |
+
+**Drift is measured against the ledger, not against your session.** The question
+is whether what Chat would read is still true, and that doesn't depend on who is
+asking or how long they've been asking for. Concretely, drift is commits plus
+changed files since the last digest — so a session where you only *talked* never
+drifts, and one that landed three commits drifts immediately.
+
+Three levels:
+
+- **fresh** — nothing has moved. No warning anywhere, no interruption.
+- **drifting** — something moved, but not much. A quiet note in `status` and in
+  what Chat reads. Never interrupts.
+- **stale** — past a threshold. Chat is told, in the first line it reads, that
+  the digest no longer describes the repo. The `Stop` hook asks for a fresh one.
+
+Age alone never makes a digest stale. A month-old digest for a repo nobody has
+touched is still perfectly accurate, and nagging about it would train you to
+ignore the warning that matters.
+
+```bash
+shellphone config --staleFiles 5 --staleCommits 2 --staleMinutes 45   # defaults
+shellphone config --autoDigest false     # never interrupt; /digest only
+```
+
+> This design came out of dogfooding. v0.1.0 wrote one digest per session, at the
+> *first* stop — so it described the least-finished state a session ever had and
+> then went quiet for hours. The ledger didn't just go stale, it went stale while
+> reading as current, which is worse than having no ledger at all.
 
 ## Connecting Claude Code (stdio)
 
@@ -109,9 +151,12 @@ shellphone inbox [repo] [--all]      instructions sent from chat
 shellphone ack [repo] <id>           mark an instruction acted on
 shellphone send <repo> <text...>     queue an instruction locally (test the write path)
 shellphone prompt                    statusline fragment, silent when idle
-shellphone config [--autonomous B]   show or set config
+shellphone config                    show or set config (see Drift, above)
 shellphone forget <repo>             unregister (leaves files on disk)
 ```
+
+Inside Claude Code, `/digest` writes one immediately — that's the ergonomic path,
+and the one to reach for before switching over to Chat.
 
 `shellphone prompt` prints `🦞📞2` when a repo has unread instructions and nothing
 at all otherwise, so it drops straight into a statusline:
@@ -155,9 +200,12 @@ on, which is the point.
 
 ## Answers to SPEC §7
 
-- **Digest granularity** — per session, not per stop. The stop-hook records the
-  session id and skips any session that already has a digest, so a session that
-  stops five times still produces one entry.
+- **Digest granularity** — neither per-stop nor per-session: per *drift*. Both of
+  the original options are wrong, and dogfooding showed why. Per-stop spams the
+  ledger, since `Stop` fires at the end of every turn. Per-session sounds right
+  but collapses to the **first** stop, describing the least-finished state the
+  session ever had. Writing when the repo has actually moved is the only version
+  where the cost is proportional to the value. See *Drift*, above.
 - **Multi-machine repos** — every digest carries a `machine` tag (hostname). The
   registry is per-machine, so two boxes with the same repo produce two ledgers
   that reconcile through git like any other file.

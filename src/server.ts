@@ -6,6 +6,7 @@ import { appendDigest, latestDigest, makeDigest, recentDigests } from './ledger.
 import { appendInstruction, pending, readCursor, readInbox } from './queue.js';
 import { ago, gitBranch, renderDigest, renderInstruction, truncate } from './format.js';
 import { loadConfig, normalizeChanged } from './paths.js';
+import { computeDrift, driftNotice } from './drift.js';
 import { DIGEST_STATUSES } from './types.js';
 
 export const VERSION = '0.1.0';
@@ -66,9 +67,11 @@ export function buildServer(): McpServer {
         const head = `- **${e.name}** · \`${d?.branch ?? gitBranch(e.path) ?? 'no-branch'}\``;
         if (!d) return `${head} · no digests yet`;
         const flag = p ? ` · 🦞 ${p} pending instruction${p === 1 ? '' : 's'}` : '';
+        const notice = driftNotice(computeDrift(e.path, d.ts));
         return (
           `${head} · **${d.status}** · ${ago(d.ts)}${flag}\n  ${truncate(d.summary, 160)}` +
-          (d.next_decision ? `\n  next: ${truncate(d.next_decision, 120)}` : '')
+          (d.next_decision ? `\n  next: ${truncate(d.next_decision, 120)}` : '') +
+          (notice ? `\n  ${notice}` : '')
         );
       });
       return text(`${repos.length} repo(s) on ${os.hostname()}:\n\n${lines.join('\n')}`);
@@ -112,11 +115,15 @@ export function buildServer(): McpServer {
           p.map(renderInstruction).join('\n')
         : '';
       const [latest, ...rest] = digests;
+      // Put staleness above the digest, not below it — a reader who acts on the
+      // first paragraph must not have to scroll to learn it is out of date.
+      const notice = driftNotice(computeDrift(entry.path, latest!.ts));
+      const banner = notice ? `\n\n> ${notice}` : '';
       const history = rest.length
         ? `\n\n---\n\n## earlier (${rest.length})\n\n` +
           rest.map((d) => `- **${d.ts}** · ${d.status} · ${truncate(d.summary, 140)}`).join('\n')
         : '';
-      return text(`${head}\n\n## latest\n\n${renderDigest(latest!)}${history}${queue}`);
+      return text(`${head}${banner}\n\n## latest\n\n${renderDigest(latest!)}${history}${queue}`);
     },
   );
 

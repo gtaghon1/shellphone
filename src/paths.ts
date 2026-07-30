@@ -112,6 +112,12 @@ export function defaultConfig(): Config {
     port: DEFAULT_PORT,
     autonomous: false,
     allowedHosts: [`127.0.0.1:${DEFAULT_PORT}`, `localhost:${DEFAULT_PORT}`],
+    autoDigest: true,
+    // Tuned to interrupt roughly as often as auto-compact does: rarely, and
+    // only once the ledger would actively mislead someone reading it.
+    staleFiles: 5,
+    staleCommits: 2,
+    staleMinutes: 45,
   };
 }
 

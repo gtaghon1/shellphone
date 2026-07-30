@@ -66,4 +66,14 @@ export interface Config {
   autonomous: boolean;
   /** Host headers accepted by the HTTP transport. Empty disables the check. */
   allowedHosts: string[];
+
+  /**
+   * Whether the stop-hook may ask for a digest once drift goes stale — the
+   * auto-compact analogue. Off means `/digest` is the only way one gets written.
+   */
+  autoDigest: boolean;
+  /** Drift thresholds. Any one of them crossing marks the ledger stale. */
+  staleFiles: number;
+  staleCommits: number;
+  staleMinutes: number;
 }

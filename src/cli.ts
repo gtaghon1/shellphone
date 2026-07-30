@@ -18,6 +18,7 @@ import { appendInstruction, consumeInstruction, pending, readInbox } from './que
 import { liveRepos, register, resolveRepo, unregister } from './registry.js';
 import { ago, gitBranch, truncate } from './format.js';
 import { runHook } from './hooks.js';
+import { computeDrift, driftNotice } from './drift.js';
 import { runHttp, runStdio } from './transports.js';
 import { DIGEST_STATUSES, type DigestStatus, type RepoEntry } from './types.js';
 import { VERSION } from './server.js';
@@ -137,6 +138,11 @@ function cmdStatus(): void {
     say(
       `${c.bold(e.name.padEnd(nameW))}  ${status}  ${ago(d.ts).padEnd(8)}  ${truncate(d.summary, 60)}${flag}`,
     );
+    const drift = computeDrift(e.path, d.ts);
+    if (drift.level !== 'fresh') {
+      const notice = driftNotice(drift);
+      say(`${' '.repeat(nameW)}  ${drift.level === 'stale' ? c.yellow(notice) : c.dim(notice)}`);
+    }
   }
   const totalPending = rows.reduce((n, r) => n + r.p, 0);
   if (totalPending) {
@@ -157,6 +163,10 @@ function renderAttach(entry: RepoEntry, limit: number): string {
     lines.push(c.dim('no digests yet'));
   } else {
     lines.push(`${STATUS_COLOR[d.status](d.status)} ${c.dim(`· ${d.ts} (${ago(d.ts)})`)}`);
+    const drift = computeDrift(entry.path, d.ts);
+    if (drift.level !== 'fresh') {
+      lines.push(drift.level === 'stale' ? c.yellow(driftNotice(drift)) : c.dim(driftNotice(drift)));
+    }
     lines.push('');
     lines.push(d.summary);
     if (d.changed?.length) lines.push('', c.dim('changed: ') + d.changed.join(', '));
@@ -284,11 +294,44 @@ function shellphoneCommand(): string {
   return `node ${fileURLToPath(import.meta.url)}`;
 }
 
+/**
+ * The `/digest` slash command — the `/compact` analogue. The prompt lives here
+ * rather than in the hook so that asking for a digest by hand and being asked
+ * for one by the hook produce the same thing.
+ */
+const DIGEST_COMMAND = `---
+description: Write a shellphone digest of this session to the repo ledger
+---
+
+Record a shellphone digest for this repo now.
+
+Call the \`record_digest\` tool from the "shellphone" MCP server. If that server
+is not connected, run \`shellphone digest\` instead — see \`shellphone help\`.
+
+Write the summary for a reader who cannot see this conversation and has no repo
+access — that reader is a Claude Chat session the user will ask "where is this
+at". 2-4 sentences: what landed, what state it is in, what is in the way. Set
+\`next_decision\` only if progress is actually waiting on a choice. Terse wins:
+if a detail would not change what either side does next, leave it out.
+
+Prefer \`changed\` paths you actually edited this session, repo-relative.
+
+Then stop. Do not summarise for the user or start new work.
+`;
+
 function cmdInstallHooks(args: Args): void {
   const global = has(args, 'global');
-  const settingsPath = global
-    ? path.join(os.homedir(), '.claude', 'settings.json')
-    : path.join(path.resolve(args._[0] ?? process.cwd()), '.claude', 'settings.json');
+  const claudeDir = global
+    ? path.join(os.homedir(), '.claude')
+    : path.join(path.resolve(args._[0] ?? process.cwd()), '.claude');
+  const settingsPath = path.join(claudeDir, 'settings.json');
+
+  const cmdPath = path.join(claudeDir, 'commands', 'digest.md');
+  if (!fs.existsSync(cmdPath)) {
+    fs.mkdirSync(path.dirname(cmdPath), { recursive: true });
+    fs.writeFileSync(cmdPath, DIGEST_COMMAND);
+    say(c.green(`installed /digest → ${cmdPath}`));
+  }
 
   const base = shellphoneCommand();
   const wanted: Record<string, string> = {
@@ -328,13 +371,28 @@ function cmdInstallHooks(args: Args): void {
   say(c.dim('restart Claude Code (or /hooks) to pick them up'));
 }
 
+const NUMERIC_CONFIG = ['staleFiles', 'staleCommits', 'staleMinutes'] as const;
+
 function cmdConfig(args: Args): void {
   const cfg = loadConfig();
-  if (has(args, 'autonomous')) {
-    cfg.autonomous = one(args, 'autonomous') !== 'false';
+  let touched = false;
+  for (const key of ['autonomous', 'autoDigest'] as const) {
+    if (has(args, key)) {
+      cfg[key] = one(args, key) !== 'false';
+      touched = true;
+    }
+  }
+  for (const key of NUMERIC_CONFIG) {
+    if (has(args, key)) {
+      const n = Number(one(args, key));
+      if (!Number.isFinite(n) || n < 0) die(`--${key} must be a non-negative number`);
+      cfg[key] = n;
+      touched = true;
+    }
+  }
+  if (touched) {
     saveConfig(cfg);
-    say(c.green(`autonomous = ${cfg.autonomous}`));
-    return;
+    say(c.green('updated ' + CONFIG_PATH));
   }
   if (has(args, 'show-token')) {
     say(cfg.token);
@@ -347,7 +405,7 @@ function cmdConfig(args: Args): void {
 const HELP = `🦞📞 shellphone ${VERSION} — a context bridge between Claude Code and Claude Chat
 
   shellphone init [path] [--name N]     register a repo, create .shellphone/
-  shellphone install-hooks [--global]   wire the Claude Code hooks
+  shellphone install-hooks [--global]   wire the Claude Code hooks + /digest
   shellphone status                     one line per repo: status, age, summary
   shellphone attach [repo] [--watch]    full latest digest + pending instructions
   shellphone inbox [repo] [--all]       instructions sent from chat
@@ -355,7 +413,10 @@ const HELP = `🦞📞 shellphone ${VERSION} — a context bridge between Claude
   shellphone send <repo> <text...>      queue an instruction locally (test the write path)
   shellphone digest --summary ... --status ...   append a digest by hand
   shellphone prompt                     statusline fragment, silent when idle
-  shellphone config [--autonomous B]    show or set config
+  shellphone config                     show or set config; flags:
+      --autonomous B        chat may steer Code without confirmation
+      --autoDigest B        stop-hook may ask for a digest when drift is stale
+      --staleFiles N --staleCommits N --staleMinutes N   drift thresholds
   shellphone forget <repo>              unregister (leaves files on disk)
 
   shellphone mcp                        run the MCP server over stdio

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 // Tests run against the build output; `npm test` assumes `npm run build` ran.
 const { formatDigest, parseLedger, makeDigest, appendDigest, readDigests, hasDigestForSession } =
@@ -11,6 +12,7 @@ const { parseInbox, appendInstruction, pending, consumeInstruction, takeUnannoun
   await import('../dist/queue.js');
 const { ago, truncate, gitDirtyFiles } = await import('../dist/format.js');
 const { relativeToRepo, normalizeChanged } = await import('../dist/paths.js');
+const { computeDrift, driftNotice } = await import('../dist/drift.js');
 
 function tmpRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shellphone-test-'));
@@ -206,6 +208,101 @@ test('a digest written with absolute paths lands relative in the ledger', () => 
   const [d] = readDigests(dir);
   assert.deepEqual(d.changed, ['src/hooks.ts']);
   assert.ok(!fs.readFileSync(path.join(dir, '.shellphone/state.md'), 'utf8').includes(outside));
+});
+
+// ---- drift ----------------------------------------------------------------
+
+const CFG = { staleFiles: 5, staleCommits: 2, staleMinutes: 45 };
+
+function gitRepo() {
+  const dir = tmpRepo();
+  const run = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+  run('init', '-q');
+  run('config', 'user.email', 't@t');
+  run('config', 'user.name', 't');
+  fs.writeFileSync(path.join(dir, 'a.ts'), 'one');
+  run('add', '-A');
+  // Backdate the setup commit. Committing at test time would land *after* the
+  // `since` values below and correctly register as drift, which would mean every
+  // test measured the fixture instead of the thing under test.
+  const old = '2020-01-01T00:00:00Z';
+  execFileSync('git', ['-C', dir, 'commit', '-qm', 'init'], {
+    stdio: 'ignore',
+    env: { ...process.env, GIT_AUTHOR_DATE: old, GIT_COMMITTER_DATE: old },
+  });
+  return { dir, run };
+}
+
+test('a repo nobody touched is fresh', () => {
+  const { dir } = gitRepo();
+  const d = computeDrift(dir, new Date().toISOString(), [], CFG);
+  assert.equal(d.level, 'fresh');
+  assert.equal(driftNotice(d), '', 'fresh must render no warning at all');
+});
+
+test('one edited file drifts but does not go stale', () => {
+  const { dir } = gitRepo();
+  const since = new Date(Date.now() - 60_000).toISOString();
+  fs.writeFileSync(path.join(dir, 'a.ts'), 'two');
+  const d = computeDrift(dir, since, [], CFG);
+  assert.equal(d.level, 'drifting');
+  assert.deepEqual(d.files, ['a.ts']);
+  assert.match(driftNotice(d), /^note: 1 file changed/);
+});
+
+test('crossing the file threshold goes stale', () => {
+  const { dir } = gitRepo();
+  const since = new Date(Date.now() - 60_000).toISOString();
+  for (let i = 0; i < CFG.staleFiles; i++) fs.writeFileSync(path.join(dir, `f${i}.ts`), 'x');
+  const d = computeDrift(dir, since, [], CFG);
+  assert.equal(d.level, 'stale');
+  assert.match(driftNotice(d), /STALE/);
+});
+
+test('commits count as drift even when the tree is clean', () => {
+  // The gap that mtime alone would miss: edited *and* committed since the digest.
+  const { dir, run } = gitRepo();
+  const since = new Date(Date.now() - 60_000).toISOString();
+  for (let i = 0; i < CFG.staleCommits; i++) {
+    fs.writeFileSync(path.join(dir, `c${i}.ts`), 'x');
+    run('add', '-A');
+    run('commit', '-qm', `c${i}`);
+  }
+  const d = computeDrift(dir, since, [], CFG);
+  assert.equal(d.files.length, 0, 'tree is clean');
+  assert.ok(d.commits >= CFG.staleCommits);
+  assert.equal(d.level, 'stale');
+});
+
+test('age alone never goes stale without movement', () => {
+  // An old digest for a repo nobody has touched is still accurate.
+  const { dir } = gitRepo();
+  const since = new Date(Date.now() - 86_400_000).toISOString();
+  assert.equal(computeDrift(dir, since, [], CFG).level, 'fresh');
+});
+
+test('a small change plus enough age does go stale', () => {
+  const { dir } = gitRepo();
+  const since = new Date(Date.now() - CFG.staleMinutes * 60_000 - 1000).toISOString();
+  fs.writeFileSync(path.join(dir, 'a.ts'), 'two');
+  assert.equal(computeDrift(dir, since, [], CFG).level, 'stale');
+});
+
+test('no digest at all is stale as soon as anything was touched', () => {
+  const { dir } = gitRepo();
+  assert.equal(computeDrift(dir, null, [], CFG).level, 'fresh', 'nothing touched yet');
+  const d = computeDrift(dir, null, [path.join(dir, 'a.ts')], CFG);
+  assert.equal(d.level, 'stale');
+  assert.match(driftNotice(d), /no digest yet/);
+});
+
+test('outside a git repo, drift falls back to reported files', () => {
+  // Without this the non-git case reports fresh forever and never escalates.
+  const dir = tmpRepo();
+  const since = new Date(Date.now() - 60_000).toISOString();
+  const d = computeDrift(dir, since, [path.join(dir, 'a.ts')], CFG);
+  assert.deepEqual(d.files, ['a.ts']);
+  assert.equal(d.level, 'drifting');
 });
 
 // ---- format ---------------------------------------------------------------

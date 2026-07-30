@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { findRepoRoot, loadConfig, normalizeChanged } from './paths.js';
-import { hasDigestForSession } from './ledger.js';
+import { latestDigest } from './ledger.js';
+import { computeDrift } from './drift.js';
 import { takeAllPending, takeUnannounced, markAnnounced } from './queue.js';
 import { register, resolveRepo } from './registry.js';
 import { gitBranch, gitDirtyFiles } from './format.js';
@@ -79,6 +80,16 @@ function filesTouched(root: string, transcriptPath: string | undefined, limit = 
   return normalizeChanged(root, found, limit);
 }
 
+/** When this session began — the drift reference when the ledger is empty. */
+function transcriptStart(transcriptPath: string | undefined): string | null {
+  if (!transcriptPath) return null;
+  try {
+    return new Date(fs.statSync(transcriptPath).birthtimeMs).toISOString();
+  } catch {
+    return null;
+  }
+}
+
 function emit(obj: unknown): void {
   process.stdout.write(JSON.stringify(obj));
 }
@@ -130,12 +141,23 @@ export async function hookStop(): Promise<void> {
 
   // Already asked once this stop-cycle; blocking again would loop forever.
   if (input.stop_hook_active) return;
-  if (hasDigestForSession(root, sessionId)) return;
+
+  const cfg = loadConfig();
+  if (!cfg.autoDigest) return; // `/digest` only
+
+  const touched = filesTouched(root, input.transcript_path);
+
+  // Measure against the ledger, not the session. The question is whether what
+  // Chat would read is still true, which does not depend on who is asking.
+  // With no digest at all, fall back to when this session started.
+  const last = latestDigest(root);
+  const since = last?.ts ?? transcriptStart(input.transcript_path);
+  const drift = computeDrift(root, since, touched, cfg);
+  if (drift.level !== 'stale') return; // fresh or merely drifting: let it stop
 
   const entry = resolveRepo(root) ?? register(root);
   const branch = gitBranch(root);
-  const touched = filesTouched(root, input.transcript_path);
-  const changed = touched.length ? touched : gitDirtyFiles(root);
+  const changed = touched.length ? touched : drift.files.length ? drift.files : gitDirtyFiles(root);
 
   const detected = [
     `  repo:    ${entry.name}`,
@@ -145,7 +167,7 @@ export async function hookStop(): Promise<void> {
   ].join('\n');
 
   const reason = [
-    '🦞📞 shellphone: this session has no digest yet. Write one, then stop.',
+    `🦞📞 shellphone: the ledger is stale — ${drift.reason}. Write a digest, then stop.`,
     '',
     'Call the `record_digest` tool from the "shellphone" MCP server. If that server',
     'is not connected, run instead:',
