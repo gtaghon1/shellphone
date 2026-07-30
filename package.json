@@ -1,0 +1,41 @@
+{
+  "name": "shellphone",
+  "version": "0.1.0",
+  "description": "A context bridge between Claude Code and Claude Chat. Lobster Telephone, but for two Claudes.",
+  "type": "module",
+  "bin": {
+    "shellphone": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SPEC.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepare": "npm run build",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "claude-code",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "express": "^5.2.1",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.1.2",
+    "typescript": "5.9"
+  }
+}
